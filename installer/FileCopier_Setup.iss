@@ -3,23 +3,21 @@
 ; 컴파일: python utils/build_exe.py 로 자동 빌드됩니다.
 ; Inno Setup 다운로드: https://jrsoftware.org/isdl.php
 
-#define AppName "파일복사 프로그램"
-#define AppVersion "1.0.0"
+#define AppName "FileCopier"
 #define AppPublisher "your-name"
 #define AppExeName "FileCopier.exe"
-#define AppOutputName "FileCopier_설치"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#AppName}
-AppVersion={#AppVersion}
+AppVerName={#AppName}
 AppPublisher={#AppPublisher}
 DefaultDirName={localappdata}\FileCopier
 DefaultGroupName={#AppName}
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 OutputDir=..\installer_output
-OutputBaseFilename={#AppOutputName}_v{#AppVersion}
+OutputBaseFilename=FileCopier_download
 SetupIconFile=..\icon.ico
 Compression=lzma
 SolidCompression=yes
