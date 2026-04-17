@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>파일복사 프로그램 — 다운로드</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, "Malgun Gothic", "맑은 고딕", sans-serif;
+      background: #f5f7fa;
+      color: #1a1a2e;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 16px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      max-width: 560px;
+      width: 100%;
+      padding: 40px 36px;
+      text-align: center;
+    }
+
+    .icon { font-size: 64px; margin-bottom: 16px; }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: #666;
+      font-size: 1rem;
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+
+    .btn-download {
+      display: inline-block;
+      background: #2563eb;
+      color: #fff;
+      text-decoration: none;
+      font-size: 1.1rem;
+      font-weight: 600;
+      padding: 16px 40px;
+      border-radius: 10px;
+      transition: background 0.2s;
+      margin-bottom: 12px;
+    }
+    .btn-download:hover { background: #1d4ed8; }
+
+    .version-note {
+      font-size: 0.82rem;
+      color: #999;
+      margin-bottom: 36px;
+    }
+
+    .features {
+      text-align: left;
+      background: #f8faff;
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 32px;
+    }
+    .features h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 12px;
+    }
+    .features li {
+      list-style: none;
+      font-size: 0.93rem;
+      color: #555;
+      padding: 4px 0;
+    }
+    .features li::before { content: "✔ "; color: #2563eb; }
+
+    .warning {
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 10px;
+      padding: 16px 20px;
+      text-align: left;
+      font-size: 0.88rem;
+      color: #78350f;
+      margin-bottom: 32px;
+      line-height: 1.7;
+    }
+    .warning strong { display: block; margin-bottom: 4px; }
+
+    .steps {
+      text-align: left;
+      font-size: 0.9rem;
+      color: #444;
+      line-height: 2;
+    }
+    .steps h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 8px;
+    }
+    .steps ol { padding-left: 20px; }
+
+    footer {
+      margin-top: 32px;
+      font-size: 0.8rem;
+      color: #aaa;
+    }
+    footer a { color: #aaa; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📂</div>
+    <h1>파일복사 프로그램</h1>
+    <p class="subtitle">
+      숫자 목록만 입력하면<br>
+      해당 파일을 자동으로 찾아 복사해 드립니다.
+    </p>
+
+    <!--
+      GITHUB_REPO 를 실제 저장소로 설정한 후
+      아래 href 를 GitHub Releases 최신 인스톨러 주소로 변경하세요.
+      예: https://github.com/lucky2449/FileCopier/releases/latest/download/FileCopier_설치_v1.0.0.exe
+    -->
+    <a class="btn-download" href="https://github.com/lucky2449/FileCopier/releases/latest/download/FileCopier_%EC%84%A4%EC%B9%98_v1.0.0.exe">
+      ⬇ 지금 설치하기 (Windows)
+    </a>
+    <p class="version-note">Windows 7 이상 · 관리자 권한 불필요 · 최신 버전 자동 업데이트</p>
+
+    <div class="features">
+      <h2>주요 기능</h2>
+      <ul>
+        <li>숫자, 파일명, 경로를 자유롭게 입력</li>
+        <li>원본 폴더에서 대상 폴더로 일괄 복사</li>
+        <li>확장자 필터로 원하는 파일만 선택</li>
+        <li>중복 파일 자동 이름 변경</li>
+        <li>새 버전 출시 시 앱에서 자동 알림</li>
+      </ul>
+    </div>
+
+    <div class="warning">
+      <strong>⚠ 설치 시 Windows 보안 경고가 뜰 수 있어요</strong>
+      "Windows에서 PC를 보호했습니다" 메시지가 나타나면<br>
+      <b>"추가 정보"</b>를 클릭한 후 <b>"실행"</b>을 클릭하시면 됩니다.
+    </div>
+
+    <div class="steps">
+      <h2>설치 방법</h2>
+      <ol>
+        <li>위 버튼을 눌러 설치 파일을 다운로드합니다.</li>
+        <li>다운로드된 <code>FileCopier_설치_vX.X.X.exe</code>를 더블클릭합니다.</li>
+        <li>보안 경고가 뜨면 "추가 정보 → 실행"을 클릭합니다.</li>
+        <li><b>설치</b> 버튼을 클릭하면 완료됩니다.</li>
+      </ol>
+    </div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/lucky2449/FileCopier">GitHub</a> ·
+    <a href="https://github.com/lucky2449/FileCopier/releases">모든 버전</a>
+  </footer>
+</body>
+</html>

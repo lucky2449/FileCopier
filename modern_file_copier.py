@@ -21,8 +21,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QPalette, QColor, QIcon, QPixmap
 
-sys.path.append(str(Path(__file__).parent / "utils"))
-from updater import get_latest_release, is_newer, download_update, apply_update, GITHUB_REPO
+from utils.updater import get_latest_release, is_newer, download_update, apply_update, GITHUB_REPO
 
 
 class UpdateCheckThread(QThread):

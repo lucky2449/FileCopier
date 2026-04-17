@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-실행 파일 생성 스크립트
-PyInstaller를 사용하여 단일 EXE 파일로 빌드합니다.
-빌드 후 dist/FileCopier.exe 를 GitHub Release에 업로드하세요.
+실행 파일 및 설치 프로그램 생성 스크립트
+1단계: PyInstaller로 단일 EXE 빌드
+2단계: Inno Setup으로 설치 프로그램(.exe) 빌드
 """
 
 import subprocess
@@ -21,15 +21,11 @@ def get_version():
     return "0.0.0"
 
 
-def build_executable():
-    print("=" * 50)
-    version = get_version()
-    print(f"파일 복사 프로그램 v{version} 빌드")
-    print("=" * 50)
+def build_executable(project_root, version):
+    print("\n[1/2] EXE 빌드 (PyInstaller)")
+    print("-" * 40)
 
-    project_root = Path(__file__).parent.parent
     spec_file = project_root / "FileCopier.spec"
-
     if not spec_file.exists():
         print("❌ FileCopier.spec 파일을 찾을 수 없습니다.")
         return False
@@ -43,46 +39,113 @@ def build_executable():
         "--workpath", str(project_root / "build"),
     ]
 
-    print(f"명령어: {' '.join(cmd)}\n")
-
     try:
         result = subprocess.run(
             cmd, check=True, capture_output=True, text=True,
             encoding="utf-8", errors="ignore"
         )
-        print("✅ PyInstaller 완료")
         if result.stdout:
             print(result.stdout[-2000:])
 
         exe = project_root / "dist" / "FileCopier.exe"
         if exe.exists():
             size_mb = exe.stat().st_size / 1024 / 1024
-            print(f"\n✅ 빌드 성공: {exe}")
-            print(f"   크기: {size_mb:.1f} MB")
-            print(f"\n📌 다음 단계:")
-            print(f"   1. GitHub에서 새 Release 생성 (태그: v{version})")
-            print(f"   2. {exe.name} 파일을 Release에 첨부")
-            print(f"   3. Release 게시")
+            print(f"✅ {exe.name} ({size_mb:.1f} MB)")
             return True
         else:
             print(f"❌ {exe} 파일을 찾을 수 없습니다.")
             return False
 
     except subprocess.CalledProcessError as e:
-        print(f"❌ 빌드 실패: {e}")
+        print(f"❌ PyInstaller 빌드 실패: {e}")
         if e.stderr:
             print(e.stderr[-1000:])
         return False
     except FileNotFoundError:
-        print("❌ PyInstaller를 찾을 수 없습니다.")
-        print("   pip install pyinstaller")
+        print("❌ PyInstaller를 찾을 수 없습니다.  →  pip install pyinstaller")
+        return False
+
+
+def build_installer(project_root, version):
+    print("\n[2/2] 설치 프로그램 빌드 (Inno Setup)")
+    print("-" * 40)
+
+    iss_file = project_root / "installer" / "FileCopier_Setup.iss"
+    if not iss_file.exists():
+        print(f"❌ {iss_file} 파일을 찾을 수 없습니다.")
+        return False
+
+    # Inno Setup 설치 경로 후보
+    iscc_candidates = [
+        Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
+        Path(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
+        Path(r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe"),
+        Path(r"C:\Program Files\Inno Setup 5\ISCC.exe"),
+    ]
+    iscc = next((p for p in iscc_candidates if p.exists()), None)
+
+    if iscc is None:
+        print("⚠️  Inno Setup이 설치되어 있지 않아 설치 프로그램을 건너뜁니다.")
+        print("   설치: https://jrsoftware.org/isdl.php")
+        return False
+
+    # AppVersion 값을 현재 버전으로 오버라이드
+    cmd = [str(iscc), f"/DAppVersion={version}", str(iss_file)]
+
+    try:
+        result = subprocess.run(
+            cmd, check=True, capture_output=True, text=True,
+            encoding="utf-8", errors="ignore"
+        )
+
+        installer_dir = project_root / "installer_output"
+        installer = installer_dir / f"FileCopier_설치_v{version}.exe"
+        if installer.exists():
+            size_mb = installer.stat().st_size / 1024 / 1024
+            print(f"✅ {installer.name} ({size_mb:.1f} MB)")
+            return True
+        else:
+            # 파일명이 다를 수 있으므로 폴더에서 검색
+            candidates = list(installer_dir.glob("FileCopier_설치*.exe")) if installer_dir.exists() else []
+            if candidates:
+                f = candidates[-1]
+                print(f"✅ {f.name} ({f.stat().st_size / 1024 / 1024:.1f} MB)")
+                return True
+            print(f"❌ 설치 프로그램 파일을 찾을 수 없습니다: {installer_dir}")
+            return False
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Inno Setup 빌드 실패: {e}")
+        if e.stderr:
+            print(e.stderr[-500:])
         return False
 
 
 def main():
-    success = build_executable()
+    version = get_version()
+    project_root = Path(__file__).parent.parent
+
+    print("=" * 50)
+    print(f"파일 복사 프로그램 v{version} 빌드")
+    print("=" * 50)
+
+    exe_ok = build_executable(project_root, version)
+    if not exe_ok:
+        print("\n빌드 실패 ❌")
+        sys.exit(1)
+
+    installer_ok = build_installer(project_root, version)
+
     print("\n" + "=" * 50)
-    print("빌드 성공! 🎉" if success else "빌드 실패! ❌")
+    if exe_ok and installer_ok:
+        print("빌드 완료 ✅")
+        print(f"\n📌 GitHub Release 업로드 목록:")
+        print(f"   • dist/FileCopier.exe")
+        print(f"   • installer_output/FileCopier_설치_v{version}.exe")
+    elif exe_ok:
+        print("EXE 빌드 완료 ✅  (설치 프로그램 생략)")
+        print(f"\n📌 GitHub Release 업로드 목록:")
+        print(f"   • dist/FileCopier.exe")
     print("=" * 50)
 
 

@@ -11,9 +11,7 @@ import tempfile
 from pathlib import Path
 
 # ============================================================
-# GitHub 저장소 주소 설정 (업데이트 배포 시 변경 필요)
-# 예: "username/FileCopier"
-GITHUB_REPO = "your-username/your-repo"
+GITHUB_REPO = "lucky2449/FileCopier"
 # ============================================================
 
 

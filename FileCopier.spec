@@ -4,7 +4,7 @@ a = Analysis(
     ['modern_file_copier.py'],
     pathex=[],
     binaries=[],
-    datas=[('utils', 'utils'), ('icon.ico', '.')],
+    datas=[('icon.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
