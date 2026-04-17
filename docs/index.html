@@ -128,7 +128,7 @@
       해당 파일을 자동으로 찾아 복사해 드립니다.
     </p>
 
-    <a id="btn-download" class="btn-download" href="https://github.com/lucky2449/FileCopier/releases/latest">
+    <a id="btn-download" class="btn-download" href="https://github.com/lucky2449/FileCopier/raw/main/installer_output/FileCopier_download.exe">
       ⬇ 지금 설치하기 (Windows)
     </a>
     <p class="version-note">Windows 7 이상 · 관리자 권한 불필요</p>
@@ -165,16 +165,5 @@
     <a href="https://github.com/lucky2449/FileCopier/releases">모든 버전</a>
   </footer>
 
-  <script>
-    fetch('https://api.github.com/repos/lucky2449/FileCopier/releases/latest')
-      .then(r => r.json())
-      .then(data => {
-        const asset = (data.assets || []).find(a => a.name === 'FileCopier_download.exe');
-        if (asset) {
-          document.getElementById('btn-download').href = asset.browser_download_url;
-        }
-      })
-      .catch(() => {/* API 실패 시 기본 href 유지 */});
-  </script>
 </body>
 </html>
