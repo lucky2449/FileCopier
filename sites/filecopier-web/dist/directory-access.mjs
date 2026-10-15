@@ -5,7 +5,7 @@ export async function assertDistinctDirectories(source, destination) {
     typeof source.isSameEntry !== "function"
   ) {
     throw new Error(
-      "동일 폴더 확인을 위해 ‘원본 폴더 선택’ 버튼으로 원본을 다시 선택하세요. 일반 다운로드는 그대로 사용할 수 있습니다.",
+      "동일 폴더 확인을 위해 ‘폴더 직접 복사 모드로 열기’ 버튼으로 원본을 다시 선택하세요. 일반 다운로드는 그대로 사용할 수 있습니다.",
     );
   }
   if (destination?.kind !== "directory") {
@@ -61,4 +61,37 @@ export async function selectNativeSource(
   onScanning();
   const files = await readSourceDirectory(handle, { cancelled });
   return { files, name: handle.name, handle };
+}
+
+// When the source has no directory handle, only write into a fresh child folder.
+export async function createResultDirectory(
+  parent,
+  {
+    cancelled = () => false,
+    makeName = () =>
+      `파일모아_${new Date().toISOString().slice(0, 10)}_${crypto.randomUUID()}`,
+  } = {},
+) {
+  if (
+    parent?.kind !== "directory" ||
+    typeof parent.getDirectoryHandle !== "function"
+  )
+    throw new Error("저장 폴더를 다시 선택하세요.");
+  const check = () => {
+    if (cancelled()) throw new DOMException("작업 취소", "AbortError");
+  };
+  for (let attempt = 0; attempt < 20; attempt++) {
+    check();
+    const name = makeName();
+    try {
+      await parent.getDirectoryHandle(name);
+      continue; // Never reuse an existing directory, including an original source.
+    } catch (error) {
+      if (error.name === "TypeMismatchError") continue;
+      if (error.name !== "NotFoundError") throw error;
+    }
+    check();
+    return parent.getDirectoryHandle(name, { create: true });
+  }
+  throw new Error("새 결과 폴더 이름을 만들 수 없습니다. 다시 시도하세요.");
 }

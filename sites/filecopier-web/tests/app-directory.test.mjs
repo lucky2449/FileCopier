@@ -135,6 +135,16 @@ test("default downloads original files with unique names, no directory or ZIP pi
   try {
     const first = inputFile("source/a/photo.jpg", "first"),
       second = inputFile("source/b/photo.jpg", "second");
+    let sourceClicks = 0;
+    el("folder-input").click = () => {
+      sourceClicks++;
+    };
+    await el("source").fire("click");
+    assert.equal(
+      sourceClicks,
+      1,
+      "Default source selection must not call the protected folder API even when available",
+    );
     await searchInput(
       el,
       [first, second],
@@ -144,8 +154,8 @@ test("default downloads original files with unique names, no directory or ZIP pi
     assert.equal(el("copy").textContent, "선택 파일 다운로드");
     assert.equal(
       el("destination").disabled,
-      true,
-      "Input selection has no verified directory handle",
+      false,
+      "Standard source selection must allow choosing a destination",
     );
     await el("copy").fire("click");
     assert.deepEqual(
@@ -160,7 +170,11 @@ test("default downloads original files with unique names, no directory or ZIP pi
     assert.match(el("toast").textContent, /요청 2개/);
     assert.match(el("toast").textContent, /실제 저장 여부는 브라우저/);
     assert.doesNotMatch(el("toast").textContent, /저장 완료|복사 완료/);
-    assert.match(el("copy-output").textContent, /여러 파일 다운로드/);
+    assert.equal(
+      el("save-hint").textContent,
+      "미지정 시 각 파일을 일반 다운로드로 저장합니다. 저장 위치는 브라우저 설정을 따르며 새 폴더는 만들지 않습니다. 여러 파일 다운로드 허용이 필요할 수 있습니다.",
+    );
+    assert.equal(el("copy-output").hidden, true);
     assert.equal(cleanup.length, 2);
     cleanup.forEach((callback) => callback());
     assert.equal(revoked.length, 2);
@@ -228,19 +242,19 @@ test("native selection and explicit copying retain directory identity checks and
       inputClicks++;
     };
     pickerError = new DOMException("Blocked", "SecurityError");
-    await el("source").fire("click");
-    assert.match(el("toast").textContent, /파일 선택창으로 폴더 열기/);
+    await el("source-alternative").fire("click");
+    assert.match(el("toast").textContent, /기본 ‘원본 폴더 선택’/);
     assert.equal(
       inputClicks,
       0,
       "Fallback must require its own click activation",
     );
     pickerError = new DOMException("Cancelled", "AbortError");
-    await el("source").fire("click");
-    assert.equal(el("destination").disabled, true);
+    await el("source-alternative").fire("click");
+    assert.equal(el("destination").disabled, false);
     pickerError = null;
     nextDirectory = source;
-    await el("source").fire("click");
+    await el("source-alternative").fire("click");
     el("items").value = "photo.jpg";
     await el("search").fire("click");
     const beforeDownload = pickerCalls;
@@ -284,10 +298,10 @@ test("native selection and explicit copying retain directory identity checks and
     );
     await el("destination-reset").fire("click");
     assert.equal(el("copy").textContent, "선택 파일 다운로드");
-    await el("source-alternative").fire("click");
+    await el("source").fire("click");
     assert.equal(inputClicks, 1);
     await searchInput(el, [inputFile("fallback/other.jpg")], "other.jpg");
-    assert.equal(el("destination").disabled, true);
+    assert.equal(el("destination").disabled, false);
     assert.equal(el("copy").disabled, false);
   } finally {
     h.restore();
@@ -303,6 +317,7 @@ test("browsers without directory APIs use standard source selection and ordinary
       inputClicks++;
     };
     assert.equal(el("source").disabled, false);
+    assert.equal(el("source-alternative").hidden, true);
     assert.equal(el("destination").disabled, true);
     await el("source").fire("click");
     assert.equal(inputClicks, 1);
@@ -358,6 +373,102 @@ test("failed download requests release their URLs, report failure, and allow rem
     assert.match(h.el("toast").textContent, /요청 1개 \/ 요청 실패 1개/);
     assert.equal(h.revoked.length, 1);
     assert.equal(h.cleanup.length, 1);
+  } finally {
+    h.restore();
+  }
+});
+
+test("standard input can choose a destination before and after downloading and copy into isolated result folders", async () => {
+  let nextDirectory,
+    pickerError,
+    pickerCalls = 0,
+    creations = 0;
+  const outputs = [];
+  const parent = {
+    kind: "directory",
+    name: "output",
+    getFileHandle: () =>
+      assert.fail("Never write into the unverified source/destination parent"),
+    async getDirectoryHandle(name, options) {
+      if (!options?.create) throw new DOMException("Missing", "NotFoundError");
+      creations++;
+      const bytes = [];
+      const output = { name, bytes };
+      outputs.push(output);
+      return {
+        kind: "directory",
+        name,
+        async *values() {},
+        async getFileHandle(fileName, create) {
+          if (!create?.create)
+            throw new DOMException("Missing", "NotFoundError");
+          assert.equal(fileName, "photo.jpg");
+          return {
+            createWritable: async () => ({
+              write: async (chunk) => bytes.push(chunk),
+              close: async () => {},
+            }),
+          };
+        },
+      };
+    },
+  };
+  const h = await setup({
+    showDirectoryPicker: async () => {
+      pickerCalls++;
+      if (pickerError) throw pickerError;
+      return nextDirectory;
+    },
+  });
+  try {
+    assert.equal(
+      h.el("destination").disabled,
+      false,
+      "Destination button must be clickable even before source selection",
+    );
+    await searchInput(
+      h.el,
+      [inputFile("source/photo.jpg", "unchanged bytes")],
+      "photo.jpg",
+    );
+    await h.el("copy").fire("click");
+    assert.equal(h.downloads.length, 1);
+    assert.equal(
+      h.el("destination").disabled,
+      false,
+      "Downloading must not disable subsequent destination selection",
+    );
+    nextDirectory = parent;
+    await h.el("destination").fire("click");
+    assert.equal(h.el("dest-label").textContent, "output");
+    assert.equal(h.el("copy").textContent, "선택 파일 복사");
+    assert.equal(
+      creations,
+      0,
+      "Choosing a parent must not create an output folder yet",
+    );
+    await h.el("copy").fire("click");
+    assert.equal(pickerCalls, 1);
+    assert.equal(creations, 1);
+    assert.equal(await new Blob(outputs[0].bytes).text(), "unchanged bytes");
+    assert.match(h.el("copy-output").textContent, /output\/파일모아_/);
+    assert.equal(
+      h.downloads.length,
+      1,
+      "Explicit copy must not fall back to download",
+    );
+    await h.el("copy").fire("click");
+    assert.equal(creations, 2);
+    assert.notEqual(outputs[0].name, outputs[1].name);
+    pickerError = new DOMException("Cancelled", "AbortError");
+    await h.el("destination").fire("click");
+    assert.equal(h.el("dest-label").textContent, "output");
+    pickerError = new DOMException("Denied", "NotAllowedError");
+    await h.el("destination").fire("click");
+    assert.equal(h.el("dest-label").textContent, "output");
+    assert.match(h.el("toast").textContent, /접근할 수 없습니다/);
+    await h.el("destination-reset").fire("click");
+    assert.equal(h.el("copy").textContent, "선택 파일 다운로드");
   } finally {
     h.restore();
   }
