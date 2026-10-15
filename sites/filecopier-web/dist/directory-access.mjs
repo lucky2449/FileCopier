@@ -69,7 +69,7 @@ export async function createResultDirectory(
   {
     cancelled = () => false,
     makeName = () =>
-      `파일모아_${new Date().toISOString().slice(0, 10)}_${crypto.randomUUID()}`,
+      `파일모아_${new Date().toISOString().slice(0, 5)}`,
   } = {},
 ) {
   if (
