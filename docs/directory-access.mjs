@@ -5,7 +5,7 @@ export async function assertDistinctDirectories(source, destination) {
     typeof source.isSameEntry !== "function"
   ) {
     throw new Error(
-      "동일 폴더 확인을 위해 ‘폴더 직접 복사용으로 열기’로 원본을 다시 선택하세요. ZIP 저장은 그대로 사용할 수 있습니다.",
+      "동일 폴더 확인을 위해 ‘원본 폴더 선택’ 버튼으로 원본을 다시 선택하세요. 일반 다운로드는 그대로 사용할 수 있습니다.",
     );
   }
   if (destination?.kind !== "directory") {
@@ -55,7 +55,7 @@ export async function selectNativeSource(
     typeof handle.isSameEntry !== "function"
   ) {
     throw new Error(
-      "이 브라우저에서는 폴더 동일 여부를 확인할 수 없습니다. 파일 선택창과 ZIP 저장을 사용하세요.",
+      "이 브라우저에서는 폴더 동일 여부를 확인할 수 없습니다. 파일 선택창과 일반 다운로드를 사용하세요.",
     );
   }
   onScanning();
