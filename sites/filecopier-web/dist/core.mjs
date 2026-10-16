@@ -23,7 +23,7 @@ export function parseItems(text) {
     .matchAll(/"([^"\r\n]+)"|([^,;\r\n]+)/g)) {
     const value = (token[1] ?? token[2]).trim();
     if (!value) continue;
-    if (!token[1] && /^[\d\s/]+$/.test(value))
+    if (!token[1] && /^[\d\s/]+$/.test(value) && !/^\d+(?:\/\d+)+$/.test(value))
       items.push(...value.split(/[\s/]+/).filter(Boolean));
     else items.push(value);
   }
@@ -39,27 +39,35 @@ export function buildIndex(files, filter = "", { cameraNumbers = true } = {}) {
   );
   const index = {
     targetExtension: filters.length === 1 ? filters[0] : "",
-    hasExtensionFilter: filters.length > 0,
     names: new Map(),
     stems: new Map(),
     ids: new Map(),
     cameraIds: new Map(),
     paths: new Map(),
+    pathStems: new Map(),
+    roots: new Set(),
   };
   for (const file of files) {
     if (isExcludedFile(file.name)) continue;
-    if (filters.length && !filters.includes(extension(file.name))) continue;
+    if (
+      (Array.isArray(filter) || filter) &&
+      !filters.includes(extension(file.name))
+    )
+      continue;
     add(index.names, normalize(file.name), file);
     add(index.stems, normalize(stem(file.name)), file);
     const path = normalize(file.path);
     add(index.paths, path, file);
-    // Each path suffix supports pasted Windows paths while retaining ambiguity.
-    for (
-      let slash = path.indexOf("/");
-      slash >= 0;
-      slash = path.indexOf("/", slash + 1)
-    )
+    const pathStem =
+      path.slice(0, path.lastIndexOf("/") + 1) + normalize(stem(file.name));
+    add(index.pathStems, pathStem, file);
+    // Only the selected source root may be omitted; never drop subfolders.
+    const slash = path.indexOf("/");
+    if (slash >= 0) {
+      index.roots.add(path.slice(0, slash));
       add(index.paths, path.slice(slash + 1), file);
+      add(index.pathStems, pathStem.slice(slash + 1), file);
+    }
     const base = stem(file.name);
     const digits = base.match(/(\d+)$/)?.[1];
     const camera = cameraNumbers
@@ -75,6 +83,37 @@ export function buildIndex(files, filter = "", { cameraNumbers = true } = {}) {
   }
   return index;
 }
+function pathMatches(index, requested, byStem = false) {
+  const absolute = /^[a-z]:\//.test(requested) || requested.startsWith("/");
+  let path = requested;
+  if (absolute) {
+    const parts = requested.split("/").filter(Boolean);
+    const anchors = parts
+      .slice(0, -1)
+      .map((part, i) => (index.roots.has(part) ? i : -1))
+      .filter((i) => i >= 0);
+    // The browser does not expose absolute source paths. An unclear root must
+    // fail closed instead of trying progressively shorter path suffixes.
+    if (anchors.length !== 1) return [];
+    path = parts.slice(anchors[0]).join("/");
+  }
+  const key = byStem
+    ? path.slice(0, path.lastIndexOf("/") + 1) +
+      normalize(stem(path.split("/").at(-1)))
+    : path;
+  const candidates = (byStem ? index.pathStems : index.paths).get(key) ?? [];
+  if (!absolute) return candidates;
+  // Absolute requests must match the full source-root path, not a relative alias.
+  return candidates.filter((file) => {
+    const actual = normalize(file.path);
+    const full = byStem
+      ? actual.slice(0, actual.lastIndexOf("/") + 1) +
+        normalize(stem(file.name))
+      : actual;
+    return full === key;
+  });
+}
+
 export function matchItem(index, item) {
   if (isExcludedFile(normalize(item).split("/").at(-1)))
     return { item, candidates: [], chosen: null, selected: false };
@@ -82,22 +121,14 @@ export function matchItem(index, item) {
   let candidates = [];
   let requiresConfirmation = false;
   const candidateReasons = new Map();
-  if (normalized.includes("/")) {
-    candidates = index.paths.get(normalized) ?? [];
-    // Ignore unavailable drive prefixes by progressively trying path suffixes.
-    for (
-      let slash = normalized.indexOf("/");
-      !candidates.length && slash >= 0;
-      slash = normalized.indexOf("/", slash + 1)
-    )
-      candidates = index.paths.get(normalized.slice(slash + 1)) ?? [];
-  }
   const name = normalized.split("/").at(-1);
-  if (!candidates.length) candidates = index.names.get(name) ?? [];
-  // A typed extension is exact by default. Cross-format lookup is allowed
-  // only when the user explicitly selects a target extension filter.
-  if (!candidates.length && (!extension(name) || index.hasExtensionFilter))
+  // The input identifies a photograph by stem/path. Only selected formats
+  // decide which extensions may be returned, even if the input names a JPG.
+  if (normalized.includes("/")) {
+    candidates = pathMatches(index, normalized, true);
+  } else {
     candidates = index.stems.get(normalize(stem(name))) ?? [];
+  }
   if (!candidates.length && /^\d+$/.test(item)) {
     const id = numericId(item);
     const inferred = index.cameraIds.get(id) ?? [];

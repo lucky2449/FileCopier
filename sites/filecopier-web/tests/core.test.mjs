@@ -189,7 +189,7 @@ test("exclude Zone.Identifier sidecars from matching and every output selection"
   );
 });
 
-test("an explicit extension never falls back to another format in all-files mode", () => {
+test("input extensions do not restrict filenames or paths when all formats are selected", () => {
   for (const ext of ["xmp", "mp4", "cr3", "jpeg"]) {
     const file = { name: `IMG_0001.${ext}`, path: `root/IMG_0001.${ext}` };
     const index = buildIndex([file]);
@@ -199,15 +199,19 @@ test("an explicit extension never falls back to another format in all-files mode
       "C:\\root\\IMG_0001.JPG",
     ]) {
       const row = matchItem(index, item);
-      assert.deepEqual(row.candidates, [], `${item} must not match ${ext}`);
-      assert.equal(row.chosen, null);
-      assert.equal(row.selected, false);
-      assert.deepEqual(selectedFiles([row]), []);
+      assert.deepEqual(
+        row.candidates,
+        [file],
+        `${item} should find selected ${ext}`,
+      );
+      assert.equal(row.chosen, file);
+      assert.equal(row.selected, true);
+      assert.deepEqual(selectedFiles([row]), [file]);
     }
   }
 });
 
-test("exact extensions remain case insensitive and extensionless searches retain ambiguity", () => {
+test("stem matching is case insensitive and keeps cross-folder or cross-format ambiguity", () => {
   const files = ["IMG_0001.JPG", "IMG_0001.XMP", "IMG_0001.MP4"].map(
     (name) => ({
       name,
@@ -215,18 +219,18 @@ test("exact extensions remain case insensitive and extensionless searches retain
     }),
   );
   const index = buildIndex(files);
-  assert.equal(matchItem(index, "img_0001.jpg").chosen, files[0]);
+  assert.deepEqual(matchItem(index, "img_0001.jpg").candidates, files);
   assert.equal(matchItem(index, "IMG_0001").candidates.length, 3);
   assert.equal(matchItem(index, "IMG_0001").chosen, null);
   assert.equal(matchItem(buildIndex([files[0]]), "IMG_0001").chosen, files[0]);
 });
 
-test("cross-format matching requires an explicit target extension filter", () => {
+test("selected formats alone determine matching extensions", () => {
   const raw = { name: "IMG_0001.CR3", path: "root/IMG_0001.CR3" };
   const video = { name: "IMG_0001.MP4", path: "root/IMG_0001.MP4" };
   assert.deepEqual(
     matchItem(buildIndex([raw, video]), "IMG_0001.JPG").candidates,
-    [],
+    [raw, video],
   );
   assert.equal(
     matchItem(buildIndex([raw, video], ".CR3"), "IMG_0001.JPG").chosen,
@@ -251,5 +255,107 @@ test("multi-extension index restricts typed names, numeric candidates and inferr
     matchItem(index, "IMG_0001.NEF").candidates.every((f) =>
       [".jpg", ".cr3"].includes(extension(f.name)),
     ),
+  );
+});
+
+test("path requests never fall back to basenames or shorter subfolder suffixes", () => {
+  assert.deepEqual(parseItems("2026/0001\n1 / 10 / 13"), [
+    "2026/0001",
+    "1",
+    "10",
+    "13",
+  ]);
+  const entries = [
+    "root/B/photo.jpg",
+    "root/A/deep/photo.jpg",
+    "root/1234.jpg",
+  ].map((path) => ({ path, name: path.split("/").at(-1) }));
+  const idx = buildIndex(entries);
+  for (const query of [
+    "A/photo.jpg",
+    "missing/B/photo.jpg",
+    "deep/photo.jpg",
+    "missing/1234",
+    "C:\\root\\missing\\B\\photo.jpg",
+    "C:\\unrelated\\B\\photo.jpg",
+  ]) {
+    const row = matchItem(idx, query);
+    assert.equal(row.chosen, null, query);
+    assert.deepEqual(row.candidates, [], query);
+  }
+  assert.equal(matchItem(idx, "B/photo.jpg").chosen, entries[0]);
+  assert.equal(matchItem(idx, "A/deep/photo.jpg").chosen, entries[1]);
+});
+test("matching different extensions preserves the requested folder", () => {
+  const entries = [
+    "root/A/photo.CR3",
+    "root/B/photo.CR3",
+    "root/B/onlyB.CR3",
+  ].map((path) => ({ path, name: path.split("/").at(-1) }));
+  const raw = buildIndex(entries, [".cr3"]);
+  for (const query of [
+    "A/photo.jpg",
+    "root/A/photo.jpg",
+    "C:\\photos\\root\\A\\photo.jpg",
+    "\\\\server\\share\\root\\A\\photo.jpg",
+    "A/photo",
+  ]) {
+    assert.equal(matchItem(raw, query).chosen, entries[0], query);
+  }
+  assert.deepEqual(matchItem(raw, "A/onlyB.jpg").candidates, []);
+  assert.deepEqual(matchItem(raw, "missing/photo.jpg").candidates, []);
+  assert.deepEqual(matchItem(buildIndex(entries), "A/photo.jpg").candidates, [
+    entries[0],
+  ]);
+  assert.equal(matchItem(raw, "photo.jpg").candidates.length, 2);
+});
+test("absolute paths require one unambiguous selected root anchor", () => {
+  const entry = { path: "root/A/photo.JPG", name: "photo.JPG" };
+  const idx = buildIndex([entry]);
+  assert.equal(matchItem(idx, "C:\\photos\\root\\A\\photo.JPG").chosen, entry);
+  assert.equal(matchItem(idx, "/home/photos/root/A/photo.JPG").chosen, entry);
+  assert.deepEqual(
+    matchItem(idx, "C:\\root\\elsewhere\\root\\A\\photo.JPG").candidates,
+    [],
+  );
+  assert.deepEqual(
+    matchItem(idx, "C:\\elsewhere\\A\\photo.JPG").candidates,
+    [],
+  );
+});
+
+test("selected formats control every typed extension and an empty selection matches nothing", () => {
+  const entries = [
+    "root/A/photo.CR3",
+    "root/A/photo.MP4",
+    "root/B/photo.NEF",
+  ].map((path) => ({ path, name: path.split("/").at(-1) }));
+  for (const inputExt of ["JPG", "NEF", "PNG"]) {
+    assert.equal(
+      matchItem(buildIndex(entries, [".cr3"]), `A/photo.${inputExt}`).chosen,
+      entries[0],
+    );
+    assert.deepEqual(
+      matchItem(buildIndex(entries, [".nef"]), `A/photo.${inputExt}`)
+        .candidates,
+      [],
+    );
+  }
+  assert.deepEqual(
+    matchItem(buildIndex(entries, []), "photo.JPG").candidates,
+    [],
+  );
+});
+test("an exact input extension must not hide selected same-stem files in another folder", () => {
+  const entries = ["root/A/photo.CR3", "root/B/photo.JPG"].map((path) => ({
+    path,
+    name: path.split("/").at(-1),
+  }));
+  const row = matchItem(buildIndex(entries, [".jpg", ".cr3"]), "photo.JPG");
+  assert.deepEqual(row.candidates, entries);
+  assert.equal(row.chosen, null);
+  assert.equal(
+    matchItem(buildIndex(entries, [".jpg", ".cr3"]), "A/photo.JPG").chosen,
+    entries[0],
   );
 });

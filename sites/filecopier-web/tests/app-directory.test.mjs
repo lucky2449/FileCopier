@@ -607,29 +607,31 @@ for (const failure of ["open", "write", "close", "cancel", "race", "abort"]) {
   });
 }
 
-test("imported reference names preserve extensions and cannot download a substitute format", async () => {
+test("imported JPG reference names find checked RAW formats and exclude unchecked video", async () => {
   const h = await setup();
   try {
-    h.el("folder-input").files = [inputFile("source/photo.MP4", "video")];
+    const raw = inputFile("source/photo.CR3", "RAW original");
+    h.el("folder-input").files = [raw, inputFile("source/photo.MP4", "video")];
     await h.el("folder-input").fire("change");
     h.el("reference-input").files = [
       inputFile("reference/photo.JPG"),
       inputFile("reference/photo.JPG.Zone.Identifier"),
     ];
     await h.el("reference-input").fire("change");
-    await selectExtensions(h.el, "");
     assert.equal(h.el("items").value, '\"photo.JPG\"');
+    await selectExtensions(h.el, ".cr3");
     await h.el("search").fire("click");
-    assert.equal(h.el("copy").disabled, true);
-    assert.equal(h.el("zip").disabled, true);
     await h.el("copy").fire("click");
-    assert.equal(h.downloads.length, 0);
+    assert.deepEqual(
+      h.downloads.map((d) => d.name),
+      ["photo.CR3"],
+    );
+    assert.equal(h.downloads[0].blob, raw);
   } finally {
     h.restore();
   }
 });
-
-test("an explicit RAW filter still allows a JPG reference to download the RAW bytes", async () => {
+test("JPG inputs find selected RAW files without a separate option", async () => {
   const h = await setup();
   try {
     const raw = inputFile("source/photo.CR3", "RAW bytes");
@@ -637,10 +639,9 @@ test("an explicit RAW filter still allows a JPG reference to download the RAW by
       h.el,
       [raw, inputFile("source/photo.MP4", "video")],
       "photo.JPG",
+      ".cr3",
     );
-    assert.equal(h.el("copy").disabled, true);
-    await selectExtensions(h.el, ".cr3");
-    await h.el("search").fire("click");
+    assert.equal(h.el("copy").disabled, false);
     await h.el("copy").fire("click");
     assert.deepEqual(
       h.downloads.map((file) => file.name),
@@ -1072,3 +1073,73 @@ for (const query of ["a/IMG_0001.JPG", "1"]) {
     }
   });
 }
+
+test("missing folder requests cannot download a namesake and RAW path lookup keeps the requested folder", async () => {
+  const h = await setup();
+  try {
+    const { el, downloads } = h;
+    const jpgB = inputFile("source/B/photo.JPG", "B-jpg");
+    const rawB = inputFile("source/B/photo.CR3", "B-raw");
+    await searchInput(el, [jpgB, rawB], "A/photo.JPG", "");
+    assert.equal(el("copy").disabled, true);
+    assert.equal(el("zip").disabled, true);
+    await el("copy").fire("click");
+    await el("zip").fire("click");
+    assert.equal(downloads.length, 0);
+    await selectExtensions(el, ".cr3");
+    await el("search").fire("click");
+    assert.equal(el("copy").disabled, true);
+    assert.equal(el("zip").disabled, true);
+    el("items").value = "photo.JPG";
+    await el("search").fire("click");
+    await el("copy").fire("click");
+    assert.equal(downloads.length, 1);
+    assert.equal(downloads[0].blob, rawB);
+    const rawA = inputFile("source/A/photo.CR3", "A-raw");
+    await searchInput(el, [jpgB, rawB, rawA], "A/photo.JPG", ".cr3");
+    assert.equal(el("selected-count").textContent, "선택한 파일 1개");
+    await el("copy").fire("click");
+    assert.equal(downloads.length, 2);
+    assert.equal(downloads[1].blob, rawA);
+    assert.equal(await rawA.text(), "A-raw");
+    assert.equal(await rawB.text(), "B-raw");
+  } finally {
+    h.restore();
+  }
+});
+
+test("all selection routes find identical RAW outputs from JPG inputs with no JPG present", async () => {
+  const h = await setup();
+  try {
+    const { el, downloads } = h;
+    const files = [
+      inputFile("source/A/IMG_0001.CR3", "A-canon"),
+      inputFile("source/A/IMG_0001.NEF", "A-nikon"),
+      inputFile("source/B/IMG_0001.CR3", "B-canon"),
+    ];
+    const outcomes = [];
+    for (const selection of ["", [".cr3", ".nef"]]) {
+      await searchInput(el, files, "A/IMG_0001.JPG", selection);
+      assert.equal(el("extension-all").checked, true);
+      assert.equal(el("extension-summary").textContent, "모든 파일");
+      const before = downloads.length;
+      outcomes.push({
+        selected: el("selected-count").textContent,
+        disabled: el("copy").disabled,
+      });
+      await el("copy").fire("click");
+      assert.deepEqual(
+        downloads.slice(before).map((d) => d.blob),
+        files.slice(0, 2),
+      );
+      await el("zip").fire("click");
+      const zip = downloads.at(-1).blob;
+      const view = new DataView(await zip.arrayBuffer());
+      assert.equal(view.getUint16(zip.size - 22 + 10, true), 2);
+    }
+    assert.deepEqual(outcomes[0], outcomes[1]);
+    assert.equal(outcomes[0].disabled, false);
+  } finally {
+    h.restore();
+  }
+});
