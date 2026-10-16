@@ -83,6 +83,7 @@ async function setup(window = {}, onDownload = () => {}) {
     },
     createDocumentFragment: () => new Element(),
     body: new Element(),
+    head: new Element(),
   };
   globalThis.window = window;
   globalThis.Option = class {
@@ -626,6 +627,134 @@ test("an explicit RAW filter still allows a JPG reference to download the RAW by
       ["photo.CR3"],
     );
     assert.equal(h.downloads[0].blob, raw);
+  } finally {
+    h.restore();
+  }
+});
+
+for (const scenario of [
+  "1000 files",
+  "partial failure",
+  "cancel after success",
+]) {
+  test(`copy analytics reports one operation with actual file counts: ${scenario}`, async () => {
+    let h,
+      commits = 0;
+    const win = { location: { origin: "https://lucky2449.github.io" } };
+    const parent = {
+      kind: "directory",
+      name: "output",
+      getFileHandle: () => assert.fail("Never write into the parent"),
+      async getDirectoryHandle(name, options) {
+        if (!options?.create)
+          throw new DOMException("Missing", "NotFoundError");
+        return {
+          kind: "directory",
+          name,
+          async *values() {},
+          async getFileHandle(fileName, options) {
+            if (!options?.create)
+              throw new DOMException("Missing", "NotFoundError");
+            return {
+              getFile: async () => new Blob([]),
+              async createWritable() {
+                return {
+                  async write() {
+                    if (
+                      scenario === "partial failure" &&
+                      fileName === "PRIVATE_1.jpg"
+                    )
+                      throw new Error("PRIVATE disk failure");
+                  },
+                  async close() {
+                    commits++;
+                    if (scenario === "cancel after success")
+                      await h.el("cancel").fire("click");
+                  },
+                  async abort() {},
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    win.showDirectoryPicker = async () => parent;
+    h = await setup(win);
+    try {
+      const count = scenario === "1000 files" ? 1000 : 3;
+      const source = Array.from({ length: count }, (_, i) =>
+        inputFile(`source/PRIVATE_${i}.jpg`, "original"),
+      );
+      await searchInput(
+        h.el,
+        source,
+        source.map((file) => file.name).join("\n"),
+      );
+      await h.el("destination").fire("click");
+      await h.el("copy").fire("click");
+      const events = win.dataLayer
+        .map((args) => Array.from(args))
+        .filter(([command]) => command === "event");
+      const success = events.filter(([, name]) => name === "copy_success");
+      const failed = events.filter(([, name]) => name === "copy_failure");
+      assert.equal(success.length, 1);
+      assert.equal(success[0][2].copied_file_count, commits);
+      assert.equal(
+        commits,
+        scenario === "1000 files"
+          ? 1000
+          : scenario === "partial failure"
+            ? 2
+            : 1,
+      );
+      assert.equal(failed.length, scenario === "partial failure" ? 1 : 0);
+      if (failed.length) assert.equal(failed[0][2].failed_file_count, 1);
+      assert.doesNotMatch(JSON.stringify(events), /PRIVATE|original/);
+      assert.equal(await source[0].text(), "original");
+    } finally {
+      h.restore();
+    }
+  });
+}
+
+test("an inferred single candidate cannot be downloaded until explicitly confirmed", async () => {
+  const h = await setup();
+  try {
+    const original = inputFile("source/P1000001.RW2", "original RAW bytes");
+    await searchInput(h.el, [original], "1");
+    assert.equal(h.el("stat-found").textContent, 0);
+    assert.equal(h.el("stat-attention").textContent, 1);
+    assert.equal(h.el("copy").disabled, true);
+    assert.equal(h.el("zip").disabled, true);
+    await h.el("copy").fire("click");
+    assert.equal(h.downloads.length, 0);
+    const findSelect = (node) => {
+      if (
+        node.handlers?.has("change") &&
+        node.children?.some((child) => child.text?.includes("후보"))
+      )
+        return node;
+      for (const child of node.children ?? []) {
+        const found = findSelect(child);
+        if (found) return found;
+      }
+    };
+    const select = findSelect(h.el("rows"));
+    assert.ok(select, "Single inferred candidate needs a confirmation control");
+    select.value = "0";
+    await select.fire("change");
+    assert.equal(h.el("copy").disabled, false);
+    await h.el("copy").fire("click");
+    assert.equal(h.downloads.length, 1);
+    assert.equal(h.downloads[0].blob, original);
+    assert.equal(await original.text(), "original RAW bytes");
+    h.el("camera-numbers").checked = false;
+    await h.el("camera-numbers").fire("change");
+    await h.el("search").fire("click");
+    assert.equal(h.el("copy").disabled, true);
+    await h.el("reset").fire("click");
+    assert.equal(h.el("camera-numbers").checked, true);
   } finally {
     h.restore();
   }
