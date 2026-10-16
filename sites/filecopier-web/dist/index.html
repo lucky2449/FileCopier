@@ -8,54 +8,27 @@
       name="description"
       content="설치와 비밀번호 없이 필요한 로컬 파일만 복사하세요."
     />
-    <link
-      rel="canonical"
-      href="https://lucky2449.github.io/selective-file-copier/"
-    />
+    <link rel="canonical" href="https://lucky2449.github.io/selective-file-copier/" />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="ko_KR" />
     <meta property="og:site_name" content="파일모아" />
     <meta property="og:title" content="파일모아 — 필요한 파일만, 간편하게" />
-    <meta
-      property="og:description"
-      content="숫자·파일명 목록으로 필요한 사진과 파일을 찾아 한 번에 모으세요. 파일은 내 기기에서 처리됩니다."
-    />
-    <meta
-      property="og:url"
-      content="https://lucky2449.github.io/selective-file-copier/"
-    />
-    <meta
-      property="og:image"
-      content="https://lucky2449.github.io/selective-file-copier/social-card-v1.png"
-    />
-    <meta
-      property="og:image:secure_url"
-      content="https://lucky2449.github.io/selective-file-copier/social-card-v1.png"
-    />
+    <meta property="og:description" content="숫자·파일명 목록으로 필요한 사진과 파일을 찾아 한 번에 모으세요. 파일은 내 기기에서 처리됩니다." />
+    <meta property="og:url" content="https://lucky2449.github.io/selective-file-copier/" />
+    <meta property="og:image" content="https://lucky2449.github.io/selective-file-copier/social-card-v1.png" />
+    <meta property="og:image:secure_url" content="https://lucky2449.github.io/selective-file-copier/social-card-v1.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta
-      property="og:image:alt"
-      content="파일모아 — 필요한 파일만, 한 번에 모으세요. 숫자·파일명으로 검색하고 간편하게 저장."
-    />
+    <meta property="og:image:alt" content="파일모아 — 필요한 파일만, 한 번에 모으세요. 숫자·파일명으로 검색하고 간편하게 저장." />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="파일모아 — 필요한 파일만, 간편하게" />
-    <meta
-      name="twitter:description"
-      content="숫자·파일명 목록으로 필요한 사진과 파일을 찾아 한 번에 모으세요. 파일은 내 기기에서 처리됩니다."
-    />
-    <meta
-      name="twitter:image"
-      content="https://lucky2449.github.io/selective-file-copier/social-card-v1.png"
-    />
-    <meta
-      name="twitter:image:alt"
-      content="파일모아 — 필요한 파일만, 한 번에 모으세요. 숫자·파일명으로 검색하고 간편하게 저장."
-    />
+    <meta name="twitter:description" content="숫자·파일명 목록으로 필요한 사진과 파일을 찾아 한 번에 모으세요. 파일은 내 기기에서 처리됩니다." />
+    <meta name="twitter:image" content="https://lucky2449.github.io/selective-file-copier/social-card-v1.png" />
+    <meta name="twitter:image:alt" content="파일모아 — 필요한 파일만, 한 번에 모으세요. 숫자·파일명으로 검색하고 간편하게 저장." />
     <title>파일모아 — 필요한 파일만, 간편하게</title>
-    <link rel="stylesheet" href="./style.css?v=dark-2" />
-    <script type="module" src="./app.mjs?v=camera-numbers-1"></script>
+    <link rel="stylesheet" href="./style.css?v=ext-dropdown-1" />
+    <script type="module" src="./app.mjs?v=ext-dropdown-2"></script>
   </head>
   <body>
     <header>
@@ -123,14 +96,14 @@
             <span>03</span>
             <h3>검색 조건</h3>
           </div>
-          <label class="field-label" for="extension">복사할 파일 확장자</label
-          ><select id="extension">
-            <option value="">모든 파일</option>
-          </select>
-          <p class="hint">
-            JPG 이름을 입력하고 RAW 확장자를 선택하면 같은 이름의 RAW 파일을
-            찾습니다.
-          </p>
+          <div id="extension-label" class="field-label">복사할 파일 확장자</div>
+          <details id="extension-menu" class="extension-menu">
+            <summary id="extension-summary" aria-label="복사할 파일 확장자 선택">확장자 선택</summary>
+            <fieldset id="extension" class="extension-field" aria-labelledby="extension-label">
+              <label class="extension-option"><input id="extension-all" type="checkbox" /><span>모든 파일</span></label>
+              <div id="extension-options" class="extension-options"></div>
+            </fieldset>
+          </details>
           <label class="hint">
             <input id="camera-numbers" type="checkbox" checked />
             제조사별 사진 번호 후보 포함

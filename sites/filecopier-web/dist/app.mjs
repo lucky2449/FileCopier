@@ -16,7 +16,12 @@ import {
   normalize,
   uniqueName,
   selectedFiles,
-} from "./core.mjs?v=camera-numbers-1";
+} from "./core.mjs?v=ext-dropdown-1";
+import {
+  buildFormatGroups,
+  resolvePhotoPair,
+  expandPhotoPairs,
+} from "./photo-pairs.mjs?v=ext-dropdown-1";
 import { writeZip } from "./zip.mjs";
 const $ = (id) => document.getElementById(id);
 const analytics = createAnalytics({ measurementId, window, document });
@@ -29,6 +34,8 @@ const defaultDestinationLabel = canChooseDestination
 const state = {
   files: [],
   rows: [],
+  pairs: new Map(),
+  extensions: new Set(),
   source: null,
   dest: null,
   busy: false,
@@ -59,6 +66,8 @@ function progress(value, message) {
 }
 function setBusy(value) {
   state.busy = value;
+  $("extension-summary").setAttribute("aria-disabled", String(value));
+  if (value) $("extension-menu").open = false;
   for (const id of [
     "source",
     "source-alternative",
@@ -93,9 +102,15 @@ function refreshSaveOptions() {
     ? "선택한 저장 폴더 안에 새 결과 폴더를 만들어 복사합니다. 원본 파일은 변경하지 않습니다."
     : "미지정 시 각 파일을 일반 다운로드로 저장합니다. 저장 위치는 브라우저 설정을 따르며 새 폴더는 만들지 않습니다. 여러 파일 다운로드 허용이 필요할 수 있습니다.";
 }
+function outputFiles() {
+  const files = selectedFiles(state.rows);
+  return state.extensions !== null
+    ? expandPhotoPairs(files, state.pairs)
+    : files;
+}
 function updateSummary() {
   refreshSaveOptions();
-  const selected = selectedFiles(state.rows),
+  const selected = outputFiles(),
     resolved = state.rows.filter((row) => row.chosen).length;
   $("stat-total").textContent = state.rows.length;
   $("stat-found").textContent = resolved;
@@ -140,7 +155,17 @@ function render() {
     });
     checkCell.append(checkbox);
     content.append(node("span", row.item, "file-name"));
-    if (row.chosen) content.append(node("span", row.chosen.path, "file-path"));
+    if (row.chosen) {
+      content.append(node("span", row.chosen.path, "file-path"));
+      if (state.extensions !== null) {
+        for (const file of state.pairs.get(row.chosen.path) ?? []) {
+          if (file !== row.chosen)
+            content.append(
+              node("span", `함께 저장: ${file.path}`, "file-path"),
+            );
+        }
+      }
+    }
     if (row.candidates.length > 1 || row.requiresConfirmation) {
       const select = node("select", undefined, "row-select");
       select.setAttribute("aria-label", `${row.item}의 복사할 파일 선택`);
@@ -189,9 +214,47 @@ function render() {
   $("rows").append(fragment);
   updateSummary();
 }
+function updateExtensionLabel() {
+  $("extension-summary").textContent =
+    state.extensions === null
+      ? "모든 파일"
+      : state.extensions.size
+        ? [...state.extensions]
+            .sort()
+            .map((ext) => ext || "확장자 없음")
+            .join(", ")
+        : "확장자 선택";
+}
+function renderExtensions() {
+  updateExtensionLabel();
+  $("extension-all").checked = state.extensions === null;
+  $("extension-options").replaceChildren();
+  const extensions = [
+    ...new Set(state.files.map((file) => extension(file.name))),
+  ].sort();
+  for (const ext of extensions) {
+    const label = node("label", undefined, "extension-option");
+    const input = node("input");
+    input.type = "checkbox";
+    input.value = ext;
+    input.checked = state.extensions?.has(ext) ?? false;
+    input.addEventListener("change", () => {
+      if (state.extensions === null) state.extensions = new Set();
+      if (input.checked) state.extensions.add(ext);
+      else state.extensions.delete(ext);
+      $("extension-all").checked = false;
+      updateExtensionLabel();
+      invalidate();
+    });
+    label.append(input, node("span", ext || "확장자 없음"));
+    $("extension-options").append(label);
+  }
+}
 function acceptSource(files, name, source = null) {
   files = files.filter((file) => !isExcludedFile(file.name));
   state.files = files;
+  state.pairs = new Map();
+  state.extensions = new Set();
   state.source = source;
   state.dest = null;
   $("copy-output").hidden = true;
@@ -199,10 +262,7 @@ function acceptSource(files, name, source = null) {
   $("source-name").textContent = name;
   $("source-detail").textContent =
     `${files.length.toLocaleString()}개 파일 · 하위 폴더 포함`;
-  $("extension").replaceChildren(new Option("모든 파일", ""));
-  [...new Set(files.map((file) => extension(file.name)).filter(Boolean))]
-    .sort()
-    .forEach((ext) => $("extension").append(new Option(ext, ext)));
+  renderExtensions();
   invalidate();
   log(`원본 폴더: ${name} / ${files.length.toLocaleString()}개 파일`);
   if (!files.length) toast("선택한 폴더에 파일이 없습니다.");
@@ -282,7 +342,14 @@ $("text-input").addEventListener("change", async (event) => {
   }
 });
 $("items").addEventListener("input", invalidate);
-$("extension").addEventListener("change", invalidate);
+$("extension-summary").addEventListener("click", (event) => {
+  if (state.busy) event.preventDefault();
+});
+$("extension-all").addEventListener("change", () => {
+  state.extensions = $("extension-all").checked ? null : new Set();
+  renderExtensions();
+  invalidate();
+});
 $("camera-numbers").addEventListener("change", invalidate);
 $("search").addEventListener("click", async () => {
   if (!state.files.length) {
@@ -298,19 +365,34 @@ $("search").addEventListener("click", async () => {
     toast("한 번에 최대 20,000개 항목까지 검색할 수 있습니다.");
     return;
   }
+  if (state.extensions?.size === 0) {
+    toast("복사할 파일 확장자를 하나 이상 체크하세요.");
+    return;
+  }
   setBusy(true);
   state.cancelled = false;
   analytics.track("file_search");
   progress(0, "파일 검색 중...");
   try {
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const index = buildIndex(state.files, $("extension").value, {
-        cameraNumbers: $("camera-numbers").checked !== false,
-      }),
+    state.pairs =
+      state.extensions === null
+        ? new Map()
+        : buildFormatGroups(state.files, state.extensions);
+    const index = buildIndex(
+        state.files,
+        state.extensions === null ? "" : [...state.extensions],
+        {
+          cameraNumbers: $("camera-numbers").checked !== false,
+        },
+      ),
       rows = [];
     for (let i = 0; i < items.length; i++) {
       if (state.cancelled) throw new DOMException("작업 취소", "AbortError");
-      rows.push(matchItem(index, items[i]));
+      const row = matchItem(index, items[i]);
+      rows.push(
+        state.extensions !== null ? resolvePhotoPair(row, state.pairs) : row,
+      );
       if (i % 300 === 0) {
         progress((i / items.length) * 100, "파일 검색 중...");
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -425,7 +507,7 @@ async function downloadFiles(files) {
   }
 }
 async function exportZip(usePicker = true) {
-  const files = selectedFiles(state.rows);
+  const files = outputFiles();
   if (!files.length) return;
   // File picker must be called during the initiating user gesture.
   let target = null;
@@ -502,7 +584,7 @@ async function exportZip(usePicker = true) {
 }
 async function copyFiles() {
   if (state.busy) return;
-  const files = selectedFiles(state.rows);
+  const files = outputFiles();
   if (!files.length) return;
   if (!state.dest) {
     await downloadFiles(files);
@@ -635,13 +717,16 @@ $("reset").addEventListener("click", () => {
   });
   $("items").value = "";
   $("camera-numbers").checked = true;
+  state.pairs = new Map();
   $("copy-output").hidden = true;
   $("source-name").textContent = "파일이 있는 폴더를 선택하세요";
   $("source-detail").textContent = "하위 폴더의 파일까지 함께 검색합니다";
   $("dest-label").textContent = defaultDestinationLabel;
-  $("extension").replaceChildren(new Option("모든 파일", ""));
+  state.extensions = new Set();
+  renderExtensions();
   $("log").textContent =
     "파일모아가 준비되었습니다. 원본 파일은 변경하지 않습니다.";
   invalidate();
 });
+renderExtensions();
 render();

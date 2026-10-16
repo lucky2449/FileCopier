@@ -118,9 +118,23 @@ function inputFile(path, bytes = "photo") {
     webkitRelativePath: path,
   });
 }
-async function searchInput(el, files, items) {
+async function selectExtensions(el, extensions) {
+  el("extension-all").checked = extensions === "";
+  await el("extension-all").fire("change");
+  if (extensions === "") return;
+  for (const ext of Array.isArray(extensions) ? extensions : [extensions]) {
+    const input = el("extension-options")
+      .children.map((label) => label.children[0])
+      .find((input) => input.value === ext);
+    assert.ok(input, `Missing extension checkbox ${ext}`);
+    input.checked = true;
+    await input.fire("change");
+  }
+}
+async function searchInput(el, files, items, extension = "") {
   el("folder-input").files = files;
   await el("folder-input").fire("change");
+  if (extension !== null) await selectExtensions(el, extension);
   el("items").value = items;
   await el("search").fire("click");
 }
@@ -265,6 +279,7 @@ test("native selection and explicit copying retain directory identity checks and
     pickerError = null;
     nextDirectory = source;
     await el("source-alternative").fire("click");
+    await selectExtensions(el, "");
     el("items").value = "photo.jpg";
     await el("search").fire("click");
     const beforeDownload = pickerCalls;
@@ -598,6 +613,7 @@ test("imported reference names preserve extensions and cannot download a substit
       inputFile("reference/photo.JPG.Zone.Identifier"),
     ];
     await h.el("reference-input").fire("change");
+    await selectExtensions(h.el, "");
     assert.equal(h.el("items").value, '\"photo.JPG\"');
     await h.el("search").fire("click");
     assert.equal(h.el("copy").disabled, true);
@@ -619,7 +635,7 @@ test("an explicit RAW filter still allows a JPG reference to download the RAW by
       "photo.JPG",
     );
     assert.equal(h.el("copy").disabled, true);
-    h.el("extension").value = ".cr3";
+    await selectExtensions(h.el, ".cr3");
     await h.el("search").fire("click");
     await h.el("copy").fire("click");
     assert.deepEqual(
@@ -755,6 +771,175 @@ test("an inferred single candidate cannot be downloaded until explicitly confirm
     assert.equal(h.el("copy").disabled, true);
     await h.el("reset").fire("click");
     assert.equal(h.el("camera-numbers").checked, true);
+  } finally {
+    h.restore();
+  }
+});
+
+test("checked extensions previews and downloads companions once; disabling returns to strict extension", async () => {
+  const h = await setup();
+  const { el, downloads } = h;
+  try {
+    const jpg = inputFile("source/a/IMG_0001.JPG", "jpeg-original");
+    const raw = inputFile("source/a/IMG_0001.CR3", "raw-original");
+    const other = inputFile("source/b/IMG_0001.CR3", "other-folder");
+    await searchInput(el, [jpg, raw, other], "a/IMG_0001.JPG", [
+      ".jpg",
+      ".cr3",
+    ]);
+    assert.equal(el("selected-count").textContent, "선택한 파일 2개");
+    const content = el("rows").children[0].children[0].children[1];
+    assert.ok(
+      content.children.some(
+        (node) => node.textContent === "함께 저장: source/a/IMG_0001.CR3",
+      ),
+    );
+    await el("copy").fire("click");
+    assert.deepEqual(
+      downloads.map((d) => d.name),
+      ["IMG_0001.JPG", "IMG_0001.CR3"],
+    );
+    assert.equal(downloads[0].blob, jpg);
+    assert.equal(downloads[1].blob, raw);
+    assert.equal(await raw.text(), "raw-original");
+    await selectExtensions(el, "");
+    assert.equal(el("copy").disabled, true);
+    await el("search").fire("click");
+    assert.equal(el("selected-count").textContent, "선택한 파일 1개");
+  } finally {
+    h.restore();
+  }
+});
+
+for (const mode of ["copy", "zip"]) {
+  test(`RAW + JPG ${mode} writes both original contents through the existing safe output path`, async () => {
+    const outputs = new Map();
+    const missing = () => {
+      throw new DOMException("Missing", "NotFoundError");
+    };
+    const destination = {
+      kind: "directory",
+      name: "output",
+      async getDirectoryHandle(name, options) {
+        if (!options?.create) return missing();
+        return {
+          kind: "directory",
+          name,
+          async *values() {},
+          async getFileHandle(name, options) {
+            if (!options?.create) return missing();
+            return {
+              getFile: async () => new Blob([]),
+              async createWritable(options) {
+                assert.equal(options.mode, "exclusive");
+                const chunks = [];
+                return {
+                  write: async (chunk) => chunks.push(chunk),
+                  close: async () => outputs.set(name, new Blob(chunks)),
+                  abort: async () => {},
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    const h = await setup({ showDirectoryPicker: async () => destination });
+    try {
+      const jpg = inputFile("source/IMG_0001.JPG", "jpeg-pair-original");
+      const raw = inputFile("source/IMG_0001.CR3", "raw-pair-original");
+      await searchInput(h.el, [jpg, raw], "1", [".jpg", ".cr3"]);
+      assert.equal(h.el("selected-count").textContent, "선택한 파일 2개");
+      if (mode === "copy") {
+        await h.el("destination").fire("click");
+        await h.el("copy").fire("click");
+        assert.deepEqual([...outputs.keys()], [jpg.name, raw.name]);
+        assert.equal(await outputs.get(jpg.name).text(), await jpg.text());
+        assert.equal(await outputs.get(raw.name).text(), await raw.text());
+        assert.match(h.el("toast").textContent, /성공 2개/);
+      } else {
+        await h.el("zip").fire("click");
+        assert.equal(h.downloads.length, 1);
+        const bytes = await h.downloads[0].blob.text();
+        assert.ok(bytes.includes(jpg.name));
+        assert.ok(bytes.includes(raw.name));
+        assert.ok(bytes.includes(await jpg.text()));
+        assert.ok(bytes.includes(await raw.text()));
+      }
+      assert.equal(await jpg.text(), "jpeg-pair-original");
+      assert.equal(await raw.text(), "raw-pair-original");
+    } finally {
+      h.restore();
+    }
+  });
+}
+
+test("extension checkboxes only save checked formats, clear stale selections and reset", async () => {
+  const h = await setup();
+  try {
+    const { el, downloads } = h;
+    await searchInput(
+      el,
+      [
+        inputFile("source/IMG_0001.JPG"),
+        inputFile("source/IMG_0001.CR3"),
+        inputFile("source/IMG_0001.NEF"),
+        inputFile("source/IMG_0001.MP4"),
+      ],
+      "1",
+      [".jpg", ".cr3"],
+    );
+    assert.equal(el("extension-all").checked, false);
+    assert.equal(el("extension-summary").textContent, ".cr3, .jpg");
+    assert.equal(el("selected-count").textContent, "선택한 파일 2개");
+    await el("copy").fire("click");
+    assert.deepEqual(
+      downloads.map((d) => d.name),
+      ["IMG_0001.JPG", "IMG_0001.CR3"],
+    );
+    await selectExtensions(el, [".cr3", ".nef"]);
+    assert.equal(el("copy").disabled, true);
+    await el("search").fire("click");
+    assert.equal(el("selected-count").textContent, "선택한 파일 2개");
+    await selectExtensions(el, ".cr3");
+    await el("search").fire("click");
+    assert.equal(el("selected-count").textContent, "선택한 파일 1개");
+    el("extension-all").checked = false;
+    await el("extension-all").fire("change");
+    await el("search").fire("click");
+    assert.equal(el("copy").disabled, true);
+    assert.match(el("toast").textContent, /하나 이상 체크/);
+    await el("reset").fire("click");
+    assert.equal(el("extension-all").checked, false);
+    assert.equal(el("extension-options").children.length, 0);
+    assert.equal(el("extension-summary").textContent, "확장자 선택");
+    let sourceClicks = 0;
+    el("folder-input").click = () => sourceClicks++;
+    await el("source").fire("click");
+    assert.equal(sourceClicks, 1);
+  } finally {
+    h.restore();
+  }
+});
+
+test("all formats starts unchecked on load, new source and reset; explicit selection is required", async () => {
+  const h = await setup();
+  try {
+    const { el } = h;
+    assert.equal(el("extension-all").checked, false);
+    assert.equal(el("extension-summary").textContent, "확장자 선택");
+    await searchInput(el, [inputFile("source/photo.jpg")], "photo.jpg", null);
+    assert.equal(el("extension-all").checked, false);
+    assert.equal(el("copy").disabled, true);
+    assert.match(el("toast").textContent, /하나 이상 체크/);
+    await selectExtensions(el, "");
+    await el("search").fire("click");
+    assert.equal(el("copy").disabled, false);
+    await searchInput(el, [inputFile("other/photo.jpg")], "photo.jpg", null);
+    assert.equal(el("extension-all").checked, false);
+    assert.equal(el("copy").disabled, true);
+    await el("reset").fire("click");
+    assert.equal(el("extension-all").checked, false);
   } finally {
     h.restore();
   }
