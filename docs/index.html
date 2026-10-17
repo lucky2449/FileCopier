@@ -28,7 +28,7 @@
     <meta name="twitter:image:alt" content="파일모아 — 필요한 파일만, 한 번에 모으세요. 숫자·파일명으로 검색하고 간편하게 저장." />
     <title>파일모아 — 필요한 파일만, 간편하게</title>
     <link rel="stylesheet" href="./style.css?v=neutral-summary-1" />
-    <script type="module" src="./app.mjs?v=result-summary-1"></script>
+    <script type="module" src="./app.mjs?v=browser-download-1"></script>
   </head>
   <body>
     <header>
@@ -58,9 +58,7 @@
             ><strong id="source-name">파일이 있는 폴더를 선택하세요</strong
             ><span id="source-detail">하위 폴더의 파일까지 함께 검색합니다</span
             ><b>폴더 선택 ↗</b></button
-          ><button id="source-alternative" class="text-btn source-alternative">
-            폴더 직접 복사 모드로 열기
-          </button>
+          >
           <input
             id="folder-input"
             type="file"
@@ -176,16 +174,15 @@
               일반 다운로드 사용
             </button>
             <p id="save-hint" class="hint">
-              미지정 시 각 파일을 일반 다운로드로 저장합니다. 저장 위치는
-              브라우저 설정을 따르며 새 폴더는 만들지 않습니다. 여러 파일
-              다운로드 허용이 필요할 수 있습니다.
+              저장 폴더 미지정 시 브라우저 다운로드로 저장합니다.
             </p>
+            
             <p id="copy-output" class="hint" hidden></p>
             <div class="save-actions">
               <button id="copy" class="primary" disabled>
                 선택 파일 다운로드</button
               ><button id="zip" class="secondary" disabled>
-                ZIP 저장 (최대 약 4GB) ↓</button
+                ZIP 다운로드 (최대 약 4GB) ↓</button
               ><button id="cancel" class="secondary" hidden>작업 취소</button>
             </div>
             <div id="progress-wrap" hidden>
@@ -198,6 +195,7 @@
       <section class="activity">
         <div>
           <h2>작업 기록</h2>
+          <button id="diagnostics" class="text-btn" title="앱 버전·브라우저 종류·작업 단계만 저장합니다. 파일 내용·파일명·경로는 포함하지 않습니다.">진단 기록 다운로드</button>
           <span>이번 작업의 진행 상황</span>
         </div>
         <pre id="log" role="log" aria-live="polite">

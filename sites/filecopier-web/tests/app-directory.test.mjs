@@ -96,6 +96,7 @@ async function setup(window = {}, onDownload = () => {}) {
         },
       },
     };
+  window.confirm ??= () => true;
   globalThis.window = window;
   globalThis.Option = class {
     constructor(text, value) {
@@ -198,7 +199,7 @@ test("default downloads original files with unique names, no directory or ZIP pi
     assert.doesNotMatch(el("toast").textContent, /저장 완료|복사 완료/);
     assert.equal(
       el("save-hint").textContent,
-      "미지정 시 각 파일을 일반 다운로드로 저장합니다. 저장 위치는 브라우저 설정을 따르며 새 폴더는 만들지 않습니다. 여러 파일 다운로드 허용이 필요할 수 있습니다.",
+      "저장 폴더 미지정 시 브라우저 다운로드로 저장합니다.",
     );
     assert.equal(el("copy-output").hidden, true);
     assert.equal(cleanup.length, 2);
@@ -206,139 +207,6 @@ test("default downloads original files with unique names, no directory or ZIP pi
     assert.equal(revoked.length, 2);
     await el("reset").fire("click");
     assert.equal(el("copy-output").hidden, true);
-  } finally {
-    h.restore();
-  }
-});
-
-test("native selection and explicit copying retain directory identity checks and preserve bytes", async () => {
-  let nextDirectory,
-    pickerError,
-    pickerCalls = 0;
-  const written = [];
-  let destinationReads = 0,
-    createdFiles = 0;
-  const sourceFile = new Blob(["photo"]);
-  const source = {
-    kind: "directory",
-    name: "source",
-    id: "source",
-    async resolve() {
-      return null;
-    },
-    async isSameEntry(other) {
-      return this.id === other.id;
-    },
-    async *values() {
-      yield {
-        kind: "file",
-        name: "photo.jpg",
-        getFile: async () => sourceFile,
-      };
-    },
-  };
-  const destination = {
-    kind: "directory",
-    name: "output",
-    id: "output",
-    async *values() {
-      destinationReads++;
-    },
-    async getDirectoryHandle(name, options) {
-      if (!options?.create) throw new DOMException("Missing", "NotFoundError");
-      return { ...destination, name };
-    },
-    async getFileHandle(name, options) {
-      if (!options?.create) throw new DOMException("Missing", "NotFoundError");
-      assert.match(this.name, /^\d{8}_\d{6}(?:_\d+)?$/);
-      createdFiles++;
-      assert.equal(name, "photo.jpg");
-      return {
-        getFile: async () => new Blob([]),
-        createWritable: async () => ({
-          write: async (bytes) => written.push(bytes),
-          close: async () => {},
-        }),
-      };
-    },
-  };
-  const h = await setup({
-    showDirectoryPicker: async () => {
-      pickerCalls++;
-      if (pickerError) throw pickerError;
-      return nextDirectory;
-    },
-    showSaveFilePicker: () => assert.fail("Must not export ZIP"),
-  });
-  const { el, downloads } = h;
-  try {
-    let inputClicks = 0;
-    el("folder-input").click = () => {
-      inputClicks++;
-    };
-    pickerError = new DOMException("Blocked", "SecurityError");
-    await el("source-alternative").fire("click");
-    assert.match(el("toast").textContent, /기본 ‘원본 폴더 선택’/);
-    assert.equal(
-      inputClicks,
-      0,
-      "Fallback must require its own click activation",
-    );
-    pickerError = new DOMException("Cancelled", "AbortError");
-    await el("source-alternative").fire("click");
-    assert.equal(el("destination").disabled, false);
-    pickerError = null;
-    nextDirectory = source;
-    await el("source-alternative").fire("click");
-    await selectExtensions(el, "");
-    el("items").value = "photo.jpg";
-    await el("search").fire("click");
-    const beforeDownload = pickerCalls;
-    await el("copy").fire("click");
-    assert.equal(
-      pickerCalls,
-      beforeDownload,
-      "Native source must still default to ordinary download",
-    );
-    assert.equal(downloads.length, 1);
-    assert.equal(createdFiles, 0);
-
-    nextDirectory = destination;
-    await el("destination").fire("click");
-    assert.equal(el("copy").textContent, "선택 파일 복사");
-    const beforeCopy = pickerCalls;
-    await el("copy").fire("click");
-    assert.equal(pickerCalls, beforeCopy);
-    assert.equal(createdFiles, 1);
-    assert.equal(await new Blob(written).text(), "photo");
-    assert.equal(
-      downloads.length,
-      1,
-      "Explicit destination must copy rather than download",
-    );
-
-    nextDirectory = source;
-    await el("destination").fire("click");
-    assert.match(el("toast").textContent, /원본 폴더와 저장 폴더가 같습니다/);
-    assert.equal(el("dest-label").textContent, "output");
-    source.isSameEntry = async () => true;
-    destinationReads = 0;
-    createdFiles = 0;
-    await el("copy").fire("click");
-    assert.equal(destinationReads, 0);
-    assert.equal(createdFiles, 0);
-    assert.equal(
-      downloads.length,
-      1,
-      "Rejected direct copy must not silently download",
-    );
-    await el("destination-reset").fire("click");
-    assert.equal(el("copy").textContent, "선택 파일 다운로드");
-    await el("source").fire("click");
-    assert.equal(inputClicks, 1);
-    await searchInput(el, [inputFile("fallback/other.jpg")], "other.jpg");
-    assert.equal(el("destination").disabled, false);
-    assert.equal(el("copy").disabled, false);
   } finally {
     h.restore();
   }
@@ -353,7 +221,6 @@ test("browsers without directory APIs use standard source selection and ordinary
       inputClicks++;
     };
     assert.equal(el("source").disabled, false);
-    assert.equal(el("source-alternative").hidden, true);
     assert.equal(el("destination").disabled, true);
     await el("source").fire("click");
     assert.equal(inputClicks, 1);
@@ -549,6 +416,11 @@ for (const failure of [
   "abort",
   "read",
   "read-midway",
+  "read-short",
+  "read-long",
+  "quota",
+  "permission",
+  "disconnected",
 ]) {
   test(`failed copy (${failure}) preserves originals and never deletes output entries`, async () => {
     const original = inputFile("source/photo.jpg", "original bytes");
@@ -567,6 +439,18 @@ for (const failure of [
         });
       };
     }
+    if (["read-short", "read-long"].includes(failure)) {
+      original.stream = () =>
+        new ReadableStream({
+          start(c) {
+            c.enqueue(
+              new Uint8Array(failure === "read-short" ? 3 : original.size + 1),
+            );
+            c.close();
+          },
+        });
+    }
+    let recovered = false;
     const existing = new Blob(["existing destination bytes"]);
     let commits = 0,
       aborts = 0,
@@ -598,6 +482,18 @@ for (const failure of [
                   throw new DOMException("Quota", "QuotaExceededError");
                 return {
                   async write() {
+                    if (
+                      !recovered &&
+                      ["quota", "permission", "disconnected"].includes(failure)
+                    )
+                      throw new DOMException(
+                        "Injected storage fault",
+                        {
+                          quota: "QuotaExceededError",
+                          permission: "NotAllowedError",
+                          disconnected: "NotFoundError",
+                        }[failure],
+                      );
                     if (["write", "abort"].includes(failure))
                       throw new Error("Disk write failed");
                     if (failure === "cancel")
@@ -635,11 +531,36 @@ for (const failure of [
       assert.match(h.el("log").textContent, /자동 삭제하지 않습니다/);
       if (failure === "race") assert.equal(attempts, 0);
       if (
-        ["write", "close", "cancel", "abort", "read", "read-midway"].includes(
-          failure,
-        )
+        [
+          "write",
+          "close",
+          "cancel",
+          "abort",
+          "read",
+          "read-midway",
+          "read-short",
+          "read-long",
+          "quota",
+          "permission",
+          "disconnected",
+        ].includes(failure)
       )
         assert.equal(aborts, 1);
+      if (["quota", "permission", "disconnected"].includes(failure)) {
+        assert.match(h.el("toast").textContent, /성공 0개 \/ 실패 1개/);
+        await h.el("diagnostics").fire("click");
+        const diagnostic = JSON.parse(await h.downloads.at(-1).blob.text());
+        assert.ok(
+          diagnostic.entries.some(
+            (e) => e.mode === "copy" && e.stage === "failed",
+          ),
+        );
+        recovered = true;
+        await h.el("copy").fire("click");
+        assert.equal(commits, 1);
+        assert.match(h.el("toast").textContent, /성공 1개 \/ 실패 0개/);
+        assert.equal(await original.text(), "original bytes");
+      }
     } finally {
       h.restore();
     }
@@ -903,9 +824,9 @@ for (const mode of ["copy", "zip"]) {
         assert.match(h.el("toast").textContent, /성공 2개/);
       } else {
         await h.el("zip").fire("click");
-        assert.equal(h.downloads.length, 0);
-        assert.ok(outputs.has("파일모아.zip"));
-        const bytes = await outputs.get("파일모아.zip").text();
+        assert.equal(h.downloads.length, 1);
+        assert.equal(outputs.size, 0);
+        const bytes = await h.downloads[0].blob.text();
         assert.ok(bytes.includes(jpg.name));
         assert.ok(bytes.includes(raw.name));
         assert.ok(bytes.includes(await jpg.text()));
@@ -1306,34 +1227,33 @@ test("ZIP never requests a writable file handle even when a save picker exists",
   }
 });
 
-for (const scenario of ["cancel-picker", "denied-picker", "oversize"]) {
-  test(`disk ZIP ${scenario} creates no download and restores controls`, async () => {
-    let picked = 0;
+for (const scenario of ["quota", "denied", "oversize"]) {
+  test(`ZIP temporary storage ${scenario} restores controls without folder picker`, async () => {
+    let opened = 0;
     const h = await setup({
-      showSaveFilePicker: () => assert.fail("Never select an existing file"),
-      showDirectoryPicker: async (options) => {
-        picked++;
-        assert.equal(options.mode, "readwrite");
-        throw new DOMException(
-          "Picker stopped",
-          scenario === "cancel-picker" ? "AbortError" : "NotAllowedError",
-        );
+      navigator: {
+        storage: {
+          getDirectory: async () => {
+            opened++;
+            throw new DOMException(
+              "Storage unavailable",
+              scenario === "quota" ? "QuotaExceededError" : "NotAllowedError",
+            );
+          },
+        },
       },
+      showDirectoryPicker: () => assert.fail("No directory picker for ZIP"),
     });
     try {
-      const original = inputFile("source/photo.CR3", "original");
+      const file = inputFile("source/photo.CR3", "original");
       if (scenario === "oversize")
-        Object.defineProperty(original, "size", {
-          value: 4 * 1024 * 1024 * 1024,
-        });
-      await searchInput(h.el, [original], "photo.CR3");
+        Object.defineProperty(file, "size", { value: 4 * 1024 ** 3 });
+      await searchInput(h.el, [file], "photo.CR3");
       await h.el("zip").fire("click");
-      assert.equal(picked, scenario === "oversize" ? 0 : 1);
+      assert.equal(opened, scenario === "oversize" ? 0 : 1);
       assert.equal(h.downloads.length, 0);
       assert.equal(h.el("zip").disabled, false);
-      assert.equal(await original.text(), "original");
-      if (scenario === "oversize")
-        assert.match(h.el("toast").textContent, /4GB/);
+      assert.equal(await file.text(), "original");
     } finally {
       h.restore();
     }
@@ -1409,6 +1329,91 @@ test("fixed result summary formats MiB sizes and counts zero-byte files without 
     );
     assert.match(h.el("summary-formats").textContent, /JPG 1개/);
     assert.match(h.el("summary-formats").textContent, /확장자 없음 1개/);
+  } finally {
+    h.restore();
+  }
+});
+
+test("cancelled first-save notice prevents download and diagnostics omit private names", async () => {
+  let approved = false,
+    calls = 0;
+  const h = await setup({
+    confirm: () => {
+      calls++;
+      return approved;
+    },
+  });
+  try {
+    await searchInput(
+      h.el,
+      [inputFile("private/SECRET.JPG", "photo")],
+      "SECRET.JPG",
+    );
+    await h.el("copy").fire("click");
+    assert.equal(h.downloads.length, 0);
+    approved = true;
+    await h.el("copy").fire("click");
+    assert.equal(h.downloads.length, 1);
+    await h.el("copy").fire("click");
+    assert.equal(calls, 2);
+    await h.el("diagnostics").fire("click");
+    const text = await h.downloads.at(-1).blob.text();
+    assert.doesNotMatch(text, /SECRET|private|photo/);
+    assert.ok(JSON.parse(text).entries.some((x) => x.stage === "requested"));
+  } finally {
+    h.restore();
+  }
+});
+
+test("ZIP uses browser download without requesting directory permission and preserves copy selection", async () => {
+  const writes = [],
+    options = [];
+  const makeDestination = (label) => ({
+    kind: "directory",
+    name: label,
+    async getDirectoryHandle(name, opts) {
+      if (!opts?.create) throw new DOMException("Missing", "NotFoundError");
+      return {
+        kind: "directory",
+        name,
+        async *values() {},
+        async getFileHandle(filename, opts) {
+          if (!opts?.create) throw new DOMException("Missing", "NotFoundError");
+          return {
+            getFile: async () => new Blob([]),
+            createWritable: async () => ({
+              write: async () => {},
+              close: async () => writes.push([label, filename]),
+              abort: async () => {},
+            }),
+          };
+        },
+      };
+    },
+  });
+  const copyDest = makeDestination("copy-folder"),
+    zipDest = makeDestination("Downloads");
+  const h = await setup({
+    showDirectoryPicker: async (opts) => {
+      options.push(opts);
+      return options.length === 1 ? copyDest : zipDest;
+    },
+  });
+  try {
+    await searchInput(
+      h.el,
+      [inputFile("source/photo.jpg", "original")],
+      "photo.jpg",
+    );
+    await h.el("destination").fire("click");
+    await h.el("zip").fire("click");
+    assert.equal(options.length, 1);
+    assert.deepEqual(writes, []);
+    assert.equal(h.el("dest-label").textContent, "copy-folder");
+    assert.equal(h.downloads.length, 1);
+    assert.equal(h.downloads[0].name, "파일모아.zip");
+    await h.el("copy").fire("click");
+    assert.deepEqual(writes.at(-1), ["copy-folder", "photo.jpg"]);
   } finally {
     h.restore();
   }

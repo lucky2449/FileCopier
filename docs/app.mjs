@@ -1,3 +1,7 @@
+import {
+  createSaveNotice,
+  createDiagnostics,
+} from "./save-policy.mjs?v=browser-download-1";
 import { createAnalytics } from "./analytics.mjs";
 import { measurementId } from "./analytics-config.mjs";
 import { withCopyLock } from "./copy-lock.mjs?v=copy-lock-1";
@@ -5,7 +9,6 @@ import { openCopyWriter } from "./copy-safety.mjs?v=source-protection-2";
 import {
   assertDistinctDirectories,
   createResultDirectory,
-  selectNativeSource,
 } from "./directory-access.mjs?v=short-time-name-1";
 import { bindSourcePicker } from "./source-picker.mjs";
 import {
@@ -23,13 +26,10 @@ import {
   resolvePhotoPair,
   expandPhotoPairs,
 } from "./photo-pairs.mjs?v=selected-formats-1";
-import { writeZip } from "./zip.mjs";
-import {
-  saveZipToDirectory,
-  zipSize,
-  DOWNLOAD_ZIP_LIMIT,
-} from "./zip-storage.mjs?v=stream-zip-4gb-1";
+import { prepareZipDownload } from "./zip-download.mjs?v=browser-download-1";
 const $ = (id) => document.getElementById(id);
+const confirmSave = createSaveNotice(window);
+const diagnostics = createDiagnostics(window.navigator?.userAgent);
 const analytics = createAnalytics({ measurementId, window, document });
 if (analytics.configured) $("analytics-notice").hidden = false;
 analytics.start();
@@ -77,7 +77,6 @@ function setBusy(value) {
   if (value) $("extension-menu").open = false;
   for (const id of [
     "source",
-    "source-alternative",
     "reset",
     "reference",
     "load-text",
@@ -107,7 +106,7 @@ function refreshSaveOptions() {
   $("destination-reset").disabled = state.busy;
   $("save-hint").textContent = state.dest
     ? "선택한 저장 폴더 안에 새 결과 폴더를 만들어 복사합니다. 원본 파일은 변경하지 않습니다."
-    : "미지정 시 각 파일을 일반 다운로드로 저장합니다. 저장 위치는 브라우저 설정을 따르며 새 폴더는 만들지 않습니다. 여러 파일 다운로드 허용이 필요할 수 있습니다.";
+    : "저장 폴더 미지정 시 브라우저 다운로드로 저장합니다.";
 }
 function outputFiles() {
   const files = selectedFiles(state.rows);
@@ -156,8 +155,8 @@ function updateSummary() {
   $("copy").disabled = state.busy || !selected.length;
   $("zip").disabled = state.busy || !selected.length;
   $("zip").textContent =
-    state.dest || window.showDirectoryPicker
-      ? "ZIP 저장 (최대 약 4GB) ↓"
+    typeof window.navigator?.storage?.getDirectory === "function"
+      ? "ZIP 다운로드 (최대 약 4GB) ↓"
       : "ZIP 다운로드 (최대 512MB) ↓";
   $("copy").textContent = state.dest ? "선택 파일 복사" : "선택 파일 다운로드";
   const available = state.rows.filter((row) => row.chosen);
@@ -322,33 +321,6 @@ bindSourcePicker({
   onFiles: (files, name) => acceptSource(files, name),
   onError: report,
 });
-$("source-alternative").hidden = !canChooseDestination;
-if (canChooseDestination)
-  $("source-alternative").addEventListener("click", async () => {
-    try {
-      const selection = await selectNativeSource(
-        (options) => window.showDirectoryPicker(options),
-        {
-          onScanning: () => {
-            state.cancelled = false;
-            setBusy(true);
-            progress(0, "원본 폴더 읽는 중...");
-          },
-          cancelled: () => state.cancelled,
-        },
-      );
-      acceptSource(selection.files, selection.name, selection.handle);
-    } catch (error) {
-      if (error.name === "SecurityError" || error.name === "NotAllowedError") {
-        toast(
-          "폴더 접근이 차단되었습니다. 위의 기본 ‘원본 폴더 선택’ 버튼으로 열면 일반 다운로드로 저장할 수 있습니다.",
-        );
-      } else report(error);
-    } finally {
-      setBusy(false);
-      $("progress-wrap").hidden = true;
-    }
-  });
 $("reference").addEventListener("click", () => $("reference-input").click());
 $("reference-input").addEventListener("change", (event) => {
   if (event.target.files.length) {
@@ -536,6 +508,10 @@ async function downloadFiles(files) {
         `다운로드 요청 중 · ${i + 1} / ${files.length}개`,
       );
     }
+    diagnostics.record(
+      "download",
+      state.cancelled ? "cancelled" : failed ? "failed" : "requested",
+    );
     const summary = `${state.cancelled ? "다운로드 요청 취소" : "다운로드 요청 처리"} · 요청 ${requested}개 / 요청 실패 ${failed}개 / 미요청 ${files.length - requested - failed}개`;
     progress(((requested + failed) / files.length) * 100, summary);
     log(summary);
@@ -550,6 +526,8 @@ async function exportZip() {
   if (state.busy) return;
   const files = outputFiles();
   if (!files.length) return;
+  if (!confirmSave()) return;
+  diagnostics.record("zip", "started");
   state.cancelled = false;
   const controller = new AbortController();
   state.copyAbort = controller;
@@ -562,64 +540,32 @@ async function exportZip() {
       name: uniqueName(entry.name, occupied),
       file: entry.file,
     }));
-    const disk = Boolean(state.dest || window.showDirectoryPicker);
-    zipSize(entries, disk ? undefined : DOWNLOAD_ZIP_LIMIT);
-    // Invoke a folder picker in the click gesture. Never choose an existing file.
-    const destination = disk
-      ? state.dest || (await window.showDirectoryPicker({ mode: "readwrite" }))
-      : null;
+    diagnostics.record("zip", "writing");
+    const blob = await prepareZipDownload(entries, {
+      storage: window.navigator?.storage,
+      cancelled: () => state.cancelled,
+      progress: (index, count, bytes, size) =>
+        progress(
+          Math.min(100, ((index + (size ? bytes / size : 0)) / count) * 100),
+          `ZIP 생성 중 · ${Math.min(index + 1, count)} / ${count}개`,
+        ),
+    });
     if (state.cancelled) throw new DOMException("작업 취소", "AbortError");
-    const reportProgress = (index, count, bytes, size) =>
-      progress(
-        Math.min(100, ((index + (size ? bytes / size : 0)) / count) * 100),
-        `ZIP 저장 중 · ${Math.min(index + 1, count)} / ${count}개`,
-      );
-    if (disk) {
-      const result = await saveZipToDirectory(entries, {
-        destination,
-        source: state.source,
-        locks: window.navigator?.locks,
-        signal: controller.signal,
-        cancelled: () => state.cancelled,
-        progress: reportProgress,
-        onWaiting: () =>
-          progress(
-            0,
-            "ZIP 저장 순서 대기 중 · 다른 탭의 저장이 끝나면 시작합니다",
-          ),
-        onDirectory: (path) => {
-          $("copy-output").textContent = `이번 저장 위치: ${path}`;
-          $("copy-output").hidden = false;
-          log(`ZIP 저장 위치: ${path}`);
-        },
-      });
-      progress(100, `ZIP 저장 완료 · ${entries.length}개 파일`);
-      log(`ZIP 저장 완료: ${entries.length}개 파일 · ${result.bytes}바이트`);
-      toast("새 결과 폴더에 ZIP을 저장했습니다.");
-    } else {
-      const parts = [];
-      await writeZip(
-        entries,
-        { write: async (bytes) => parts.push(bytes) },
-        {
-          cancelled: () => state.cancelled,
-          progress: reportProgress,
-        },
-      );
-      if (state.cancelled) throw new DOMException("작업 취소", "AbortError");
-      download(new Blob(parts, { type: "application/zip" }), "파일모아.zip");
-      progress(100, `ZIP 다운로드 요청 완료 · ${entries.length}개 파일`);
-      log(`ZIP 다운로드 요청 완료: ${entries.length}개 파일`);
-      toast(
-        "ZIP 다운로드를 요청했습니다. 실제 저장 여부는 브라우저 다운로드 목록에서 확인하세요.",
-      );
-    }
+    download(blob, "파일모아.zip");
+    progress(100, `ZIP 다운로드 요청 완료 · ${entries.length}개 파일`);
+    log(`ZIP 다운로드 요청 완료: ${entries.length}개 파일`);
+    toast(
+      "ZIP 다운로드를 요청했습니다. 실제 저장 여부는 브라우저 다운로드 목록에서 확인하세요.",
+    );
+    diagnostics.record("zip", "requested");
     analytics.track("zip_created");
   } catch (error) {
     if (error.name === "AbortError") {
+      diagnostics.record("zip", "cancelled");
       log("ZIP 저장 취소 · 중단된 출력은 자동 삭제하지 않습니다.");
       toast("작업을 취소했습니다.");
     } else {
+      diagnostics.record("zip", "failed");
       log("ZIP 저장 실패 · 중단된 출력은 자동 삭제하지 않습니다.");
       report(error);
     }
@@ -632,6 +578,8 @@ async function copyFiles() {
   if (state.busy) return;
   const files = outputFiles();
   if (!files.length) return;
+  if (!confirmSave()) return;
+  diagnostics.record(state.dest ? "copy" : "download", "started");
   if (!state.dest) {
     await downloadFiles(files);
     return;
@@ -645,6 +593,7 @@ async function copyFiles() {
   let success = 0,
     failed = 0;
   try {
+    diagnostics.record("copy", "location-check");
     await withCopyLock(
       async () => {
         if (state.source)
@@ -659,6 +608,7 @@ async function copyFiles() {
         $("copy-output").textContent = `이번 저장 위치: ${outputLabel}`;
         $("copy-output").hidden = false;
         log(`저장 위치: ${outputLabel}`);
+        diagnostics.record("copy", "writing");
         const occupied = new Set();
         for await (const entry of dest.values()) {
           if (state.cancelled) break;
@@ -700,6 +650,10 @@ async function copyFiles() {
                   throw new DOMException("작업 취소", "AbortError");
                 const { done, value } = await reader.read();
                 if (done) break;
+                if (bytes + value.byteLength > file.size)
+                  throw new Error(
+                    "읽은 데이터가 원본 파일 크기를 초과하여 복사를 중단했습니다. 원본을 다시 선택하세요.",
+                  );
                 await writer.write(value);
                 bytes += value.byteLength;
                 progress(
@@ -714,6 +668,10 @@ async function copyFiles() {
             }
             if (state.cancelled)
               throw new DOMException("작업 취소", "AbortError");
+            if (bytes !== file.size)
+              throw new Error(
+                "읽은 데이터와 원본 파일 크기가 달라 복사를 중단했습니다. 원본을 다시 선택하세요.",
+              );
             await writer.close();
             success++;
             log(`복사됨: ${entry.name} → ${newName}`);
@@ -730,6 +688,10 @@ async function copyFiles() {
             `처리 중 · ${i + 1} / ${files.length}개`,
           );
         }
+        diagnostics.record(
+          "copy",
+          state.cancelled ? "cancelled" : failed ? "failed" : "completed",
+        );
         const remaining = files.length - success - failed;
         const summary = `${state.cancelled ? "작업 취소" : "복사 완료"} · 성공 ${success}개 / 실패 ${failed}개 / 미처리 ${remaining}개`;
         progress(((success + failed) / files.length) * 100, summary);
@@ -756,6 +718,7 @@ async function copyFiles() {
     );
   } catch (error) {
     if (error.name === "AbortError") {
+      diagnostics.record("copy", "cancelled");
       log("저장 위치 선택 또는 복사를 취소했습니다.");
       toast("작업을 취소했습니다.");
     } else if (
@@ -769,6 +732,8 @@ async function copyFiles() {
       );
     } else report(error);
   } finally {
+    if (!state.cancelled && success + failed < files.length)
+      diagnostics.record("copy", "failed");
     // One summary per copy operation; GA4 user metrics deduplicate visitors.
     state.copyAbort = null;
     analytics.recordCopyResult(success, failed);
@@ -805,3 +770,10 @@ $("reset").addEventListener("click", () => {
 });
 renderExtensions();
 render();
+
+$("diagnostics").addEventListener("click", () =>
+  download(
+    new Blob([diagnostics.export()], { type: "application/json" }),
+    "filemoa-diagnostics.json",
+  ),
+);
